@@ -1,169 +1,105 @@
 <?php
 
-namespace Kanboard\Plugin\BigBoard\Model;
+namespace Kanboard\Plugin\Bigboard\Model;
 
 use Kanboard\Core\Base;
 use Kanboard\Model\ProjectModel;
 
+/**
+ * Per-user BigBoard state: which projects are on the board and which are
+ * collapsed. Stored as JSON id lists in user_metadata (no plugin tables), and
+ * always intersected with the projects the user can currently access.
+ */
 class BigboardModel extends Base
 {
-    const SELTABLE = 'bigboard_selected';
-	const COLTABLE = 'bigboard_collapsed';
-	
-	
-	// SELECT methods :
-	// manage list of projects selected to be displayed on the bigboard view
-	
-    public function selectFindAllProjects($user_id)
-    {
-        $selectedProjects = $this->db->table(self::SELTABLE)
-            ->eq('user_id', $user_id)
-            ->in('project_id', $this->db->table(ProjectModel::TABLE)->findAllByColumn('id'))
-            ->findAll();
+    public const KEY_SELECTED = 'bigboard_selected';
+    public const KEY_COLLAPSED = 'bigboard_collapsed';
 
-        $projects = array();
-        foreach ($selectedProjects as $selectedProject) {
-            $projects[] = $this->projectModel->getById($selectedProject['project_id']);
+    /** @return list<int> accessible selected project ids, ascending */
+    public function getSelectedProjectIds(int $userId): array
+    {
+        return $this->accessible($userId, $this->read($userId, self::KEY_SELECTED));
+    }
+
+    public function saveSelection(int $userId, array $projectIds): void
+    {
+        $this->write($userId, self::KEY_SELECTED, $this->accessible($userId, $projectIds));
+    }
+
+    /** @return list<array{id:int,name:string,is_private:int}> accessible projects, by name */
+    public function getSelectableProjects(int $userId): array
+    {
+        $ids = $this->projectPermissionModel->getActiveProjectIds($userId);
+
+        if (empty($ids)) {
+            return [];
         }
 
-        return $projects;
-    }
-
-    public function selectFindAllProjectsById($user_id)
-    {
-        $selectedProjects = $this->db->table(self::SELTABLE)
-            ->eq('user_id', $user_id)
-            ->in('project_id', $this->db->table(ProjectModel::TABLE)->findAllByColumn('id'))
+        return $this->db->table(ProjectModel::TABLE)
+            ->columns('id', 'name', 'is_private')
+            ->in('id', $ids)
+            ->asc('name')
             ->findAll();
+    }
 
-        $projects = array();
-        foreach ($selectedProjects as $selectedProject) {
-            $projects[] = $selectedProject['project_id'];
+    /** @return list<int> */
+    public function getCollapsedProjectIds(int $userId): array
+    {
+        return $this->normalize($this->read($userId, self::KEY_COLLAPSED));
+    }
+
+    /** Flip one project's collapsed state; returns true when it is now collapsed. */
+    public function toggleCollapsed(int $userId, int $projectId): bool
+    {
+        $collapsed = $this->getCollapsedProjectIds($userId);
+        $isCollapsed = in_array($projectId, $collapsed, true);
+        $next = $isCollapsed ? array_diff($collapsed, [$projectId]) : array_merge($collapsed, [$projectId]);
+        $this->write($userId, self::KEY_COLLAPSED, $this->normalize($next));
+
+        return ! $isCollapsed;
+    }
+
+    public function collapseAll(int $userId): void
+    {
+        $this->write($userId, self::KEY_COLLAPSED, $this->getSelectedProjectIds($userId));
+    }
+
+    public function expandAll(int $userId): void
+    {
+        $this->write($userId, self::KEY_COLLAPSED, []);
+    }
+
+    /** @return list<int> */
+    private function accessible(int $userId, array $projectIds): array
+    {
+        $allowed = array_map('intval', $this->projectPermissionModel->getActiveProjectIds($userId));
+
+        return array_values(array_intersect($this->normalize($projectIds), $allowed));
+    }
+
+    /** @return list<int> unique positive ints, ascending */
+    private function normalize(array $ids): array
+    {
+        $clean = [];
+        foreach ($ids as $id) {
+            if ((is_int($id) || (is_string($id) && ctype_digit($id))) && (int) $id > 0) {
+                $clean[(int) $id] = (int) $id;
+            }
         }
-		sort($projects);
-        return $projects;
+        ksort($clean);
+
+        return array_values($clean);
     }
 
-    public function selectFind($project_id, $user_id)
+    private function read(int $userId, string $key): array
     {
-        $selectedProject = $this->db->table(self::SELTABLE)
-            ->eq('user_id', $user_id)
-            ->eq('project_id', $project_id)
-            ->findOne();
+        $decoded = json_decode((string) $this->userMetadataModel->get($userId, $key, '[]'), true);
 
-		error_log("BB selectFind selectedProject = ".json_encode($selectedProject)." / project $project_id looked for user $user_id ");
-        return $selectedProject;
+        return is_array($decoded) ? $decoded : [];
     }
 
-    public function selectTake($project_id, $user_id)
+    private function write(int $userId, string $key, array $ids): void
     {
-        $status = $this->db->table(self::SELTABLE)->insert(array(
-            'project_id' => $project_id,
-            'user_id' => $user_id,
-        ));
-
-        error_log("BB selectTake STATUS = $status / project $project_id taken for user $user_id ");
-
-        return $status;
+        $this->userMetadataModel->save($userId, [$key => json_encode(array_values($ids))]);
     }
-
-    public function selectDrop($internal_id)
-    {
-        $status = $this->db->table(self::SELTABLE)
-            ->eq('id', $internal_id)
-            ->remove();
-
-        error_log("BB selectDrop STATUS = $status droped ( internal_id $internal_id )");
-
-        return !$status;
-    }
-	
-	public function selectClear($user_id)
-	{
-		        $status = $this->db->table(self::SELTABLE)
-            ->eq('user_id', $user_id)
-            ->remove();
-
-        error_log("BB selectClear STATUS = $status / cleared for user $user_id ");
-
-        return !$status;
-	}
-
-	// COLLAPSE methods :
-	// manage status of projects which display as collapsed (or else expanded) on the bigboard view
-	// if stored it is collapsed
-	
-	public function collapseFindAllProjects($user_id)
-    {
-        $collapsedProjects = $this->db->table(self::COLTABLE)
-            ->eq('user_id', $user_id)
-            ->findAll();
-
-        $projects = array();
-        foreach ($collapsedProjects as $collapsedProject) {
-            $projects[] = $this->projectModel->getById($collapsedProject['project_id']);
-        }
-
-        return $projects;
-    }
-
-    public function collapseFindAllProjectsById($user_id)
-    {
-        $collapsedProjects = $this->db->table(self::COLTABLE)
-            ->eq('user_id', $user_id)
-            ->findAll();
-
-        $projects = array();
-        foreach ($collapsedProjects as $collapsedProject) {
-            $projects[] = $collapsedProject['project_id'];
-        }
-		sort($projects);
-        return $projects;
-    }
-
-    public function collapseFind($project_id, $user_id)
-    {
-        $collapsedProject = $this->db->table(self::COLTABLE)
-            ->eq('user_id', $user_id)
-            ->eq('project_id', $project_id)
-            ->findOne();
-
-		error_log("BB collapseFind collapsedProject = ".json_encode($collapsedProject)." / project $project_id looked for user $user_id ");
-        return $collapsedProject;
-    }
-
-    public function collapseTake($project_id, $user_id)
-    {
-        $status = $this->db->table(self::COLTABLE)->insert(array(
-            'project_id' => $project_id,
-            'user_id' => $user_id,
-        ));
-
-        error_log("BB collapseTake STATUS = $status / project $project_id taken for user $user_id ");
-
-        return $status;
-    }
-
-    public function collapseDrop($internal_id)
-    {
-        $status = $this->db->table(self::COLTABLE)
-            ->eq('id', $internal_id)
-            ->remove();
-
-        error_log("BB collapseDrop STATUS = $status droped ( internal_id $internal_id )");
-
-        return !$status;
-    }
-	
-	public function collapseClear($user_id)
-	{
-		        $status = $this->db->table(self::COLTABLE)
-            ->eq('user_id', $user_id)
-            ->remove();
-
-        error_log("BB collapseClear STATUS = $status / cleared for user $user_id ");
-
-        return !$status;
-	}	
-	
 }
