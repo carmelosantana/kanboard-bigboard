@@ -7,192 +7,121 @@ use Kanboard\Core\Controller\AccessForbiddenException;
 use Kanboard\Model\UserMetadataModel;
 
 /**
- * Class BoardAjaxController.
+ * Ajax endpoints behind the BigBoard: drag-and-drop (within and across
+ * projects), polling, per-project filters and collapsed state.
  */
 class BoardAjaxController extends BaseController
 {
-    /**
-     * Save new task positions (Ajax request made by the drag and drop).
-     */
+    /** Save a drag-and-drop move. Every id in the body is checked by MoveGuard. */
     public function save()
     {
+        $this->checkReusableGETCSRFParam();
         $values = $this->request->getJson();
 
-        if (!$values['src_project_id'] || !$this->request->isAjax()) {
-            throw new AccessForbiddenException();
+        if (! $this->request->isAjax() || ! is_array($values) || ! $this->bigboardMoveGuard->isAllowed($values)) {
+            throw new AccessForbiddenException(e("You don't have the permission to move this task"));
         }
 
-        if ($values['dst_project_id'] != $values['src_project_id']) {
-            list($valid) = $this->taskValidator->validateProjectModification([
-                'id' => intval($values['task_id']),
-                'project_id' => intval($values['dst_project_id']),
-                'swimlane_id' => intval($values['dst_swimlane_id']),
-                'column_id' => intval($values['dst_column_id']),
-                'category_id' => intval($values['category_id']),
-                'owner_id' => intval($values['owner_id']),
-            ]);
+        $taskId = (int) $values['task_id'];
+        $src = (int) $values['src_project_id'];
+        $dst = (int) $values['dst_project_id'];
+        $column = (int) $values['dst_column_id'];
+        $swimlane = (int) $values['dst_swimlane_id'];
 
-            if (!$valid) {
-                throw new AccessForbiddenException(e('Malformed Request'));
+        if ($src !== $dst) {
+            $task = $this->taskFinderModel->getById($taskId);
+            $category = $this->categoryModel->getIdByName($dst, $this->categoryModel->getNameById((int) $task['category_id']));
+            $owner = $this->projectPermissionModel->isAssignable($dst, (int) $task['owner_id']) ? (int) $task['owner_id'] : 0;
 
-                return;
-            }
-
-            if ($valid && !$this->taskProjectMoveModel->moveToProject($values['task_id'], $values['dst_project_id'], $values['dst_swimlane_id'], $values['dst_column_id'], $values['category_id'], $values['owner_id'])) {
-                throw new AccessForbiddenException(e('Project cant be moved'));
-
-                return;
-            }
-
-            if (!$this->helper->projectRole->canMoveTask($values['dst_project_id'], $values['dst_column_id'], $values['dst_column_id'])) {
-                throw new AccessForbiddenException(e("You don't have the permission to move this task"));
-
-                return;
-            }
-        } else {
-            if (!$this->helper->projectRole->canMoveTask($values['src_project_id'], $values['src_column_id'], $values['dst_column_id'])) {
-                throw new AccessForbiddenException(e("You don't have the permission to move this task"));
-
-                return;
+            if (! $this->taskProjectMoveModel->moveToProject($taskId, $dst, $swimlane, $column, (int) $category, $owner)) {
+                throw new AccessForbiddenException(e('Unable to move this task to that project.'));
             }
         }
 
-        // Could result in a false return, due to the position being the same
-        $result = $this->taskPositionModel->movePosition(
-            $values['dst_project_id'],
-            $values['task_id'],
-            $values['dst_column_id'],
-            $values['position'],
-            $values['dst_swimlane_id']
-        );
-
-        $this->response->html($this->renderBoard($values['dst_project_id']), 201);
+        $this->taskPositionModel->movePosition($dst, $taskId, $column, max(1, (int) ($values['position'] ?? 1)), $swimlane);
+        $this->response->html($this->renderBoard($dst), 201);
     }
 
-    /**
-     * Check if the board has been changed.
-     */
+    /** Polling: re-render one board when it changed since the given timestamp. */
     public function check()
     {
-        $project_id = $this->request->getIntegerParam('project_id');
-        $timestamp = $this->request->getIntegerParam('timestamp');
+        $projectId = $this->requireProjectId();
 
-        if (!$project_id || !$this->request->isAjax()) {
-            throw new AccessForbiddenException();
-        }
-        if (!$this->projectModel->isModifiedSince($project_id, $timestamp)) {
+        if (! $this->projectModel->isModifiedSince($projectId, $this->request->getIntegerParam('timestamp'))) {
             $this->response->status(304);
         } else {
-            $this->response->html($this->renderBoard($project_id));
+            $this->response->html($this->renderBoard($projectId));
         }
     }
 
-    /**
-     * Reload the board with new filters.
-     */
     public function reload()
     {
-        $project_id = $this->request->getIntegerParam('project_id');
-
-        if (!$project_id || !$this->request->isAjax()) {
-            throw new AccessForbiddenException();
-        }
-
+        $projectId = $this->requireProjectId();
         $values = $this->request->getJson();
-        $this->userSession->setFilters($project_id, empty($values['search']) ? '' : $values['search']);
+        $this->userSession->setFilters($projectId, empty($values['search']) ? '' : (string) $values['search']);
 
-        $this->response->html($this->renderBoard($project_id));
+        $this->response->html($this->renderBoard($projectId));
     }
 
-    /**
-     * Enable collapsed mode.
-     */
     public function collapse()
     {
         $this->changeDisplayMode(1);
     }
 
-    /**
-     * Enable expanded mode.
-     */
     public function expand()
     {
         $this->changeDisplayMode(0);
     }
 
-    // record into database status of collapsed or expanded project in bigboard view
+    /** Toggle one project's folded state on the BigBoard. */
     public function collapseProject()
     {
-        $projectid = $_GET['project_id'];
-        $user = $this->getUser();
-        $userid = $user['id'];        
-        $collapsed = $this->bigboardModel->collapseFind($projectid, $user['id']);
-        if ($collapsed) {
-            $status = $this->bigboardModel->collapseDrop($collapsed['id']);
-        } else {
-            $status = $this->bigboardModel->collapseTake($projectid, $user['id']);
-        }
-        $this->response->json(['status' => $status]);
+        $projectId = $this->requireProjectId();
+        $collapsed = $this->bigboardModel->toggleCollapsed($this->userSession->getId(), $projectId);
+
+        $this->response->json(['status' => $collapsed]);
     }
 
-    /**
-     * get all selected projects from bigboard view to store them as collapsed.
-     */
     public function collapseAllProjects()
     {
-        $user = $this->getUser();
-        $projects_id = $this->bigboardModel->selectFindAllProjectsById($user['id']);
-        $this->bigboardModel->collapseClear($user['id']);
-        foreach ($projects_id as $project_id) {
-            $this->bigboardModel->collapseTake($project_id, $user['id']);
-        }
-
-        return true;
+        $this->bigboardModel->collapseAll($this->userSession->getId());
+        $this->response->json(['status' => true]);
     }
 
-    /**
-     * clear all projects from collapsed status to display all of them as expanded.
-     */
     public function expandAllProjects()
     {
-        $user = $this->getUser();
-
-        return $this->bigboardModel->collapseClear($user['id']);
+        $this->bigboardModel->expandAll($this->userSession->getId());
+        $this->response->json(['status' => true]);
     }
 
-    /**
-     * Render board.
-     *
-     * @param int $project_id
-     *
-     * @return string
-     */
-    protected function renderBoard($project_id)
+    /** project_id is a query param, so Kanboard's project ACL has already vetted it. */
+    private function requireProjectId(): int
+    {
+        $projectId = $this->request->getIntegerParam('project_id');
+
+        if (! $projectId || ! $this->request->isAjax()) {
+            throw new AccessForbiddenException();
+        }
+
+        return $projectId;
+    }
+
+    protected function renderBoard($projectId)
     {
         return $this->template->render('bigboard:board/table_container', [
-            'project' => $this->projectModel->getById($project_id),
+            'project' => $this->projectModel->getById($projectId),
             'board_private_refresh_interval' => $this->configModel->get('board_private_refresh_interval'),
             'board_highlight_period' => $this->configModel->get('board_highlight_period'),
             'swimlanes' => $this->taskLexer
-                ->build($this->userSession->getFilters($project_id))
-                ->format($this->boardFormatter->withProjectId($project_id)),
+                ->build($this->userSession->getFilters($projectId))
+                ->format($this->boardFormatter->withProjectId($projectId)),
         ]);
     }
 
-    /**
-     * Change display mode.
-     *
-     * @param int $mode
-     */
     private function changeDisplayMode($mode)
     {
-        $project_id = $this->request->getIntegerParam('project_id');
-        $this->userMetadataCacheDecorator->set(UserMetadataModel::KEY_BOARD_COLLAPSED.$project_id, $mode);
-
-        if ($this->request->isAjax()) {
-            $this->response->html($this->renderBoard($project_id));
-        } else {
-            $this->response->redirect($this->helper->url->to('BoardViewController', 'show', ['project_id' => $project_id]));
-        }
+        $projectId = $this->requireProjectId();
+        $this->userMetadataCacheDecorator->set(UserMetadataModel::KEY_BOARD_COLLAPSED.$projectId, $mode);
+        $this->response->html($this->renderBoard($projectId));
     }
 }

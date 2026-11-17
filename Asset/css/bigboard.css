@@ -40,4 +40,4 @@ div.selitem input[type=checkbox]:checked + span {
 
 label.sel {
     margin-top: -1px;
-}
+}.bigboard-status { text-align: center; color: lightgray; }

@@ -1,4 +1,4 @@
-<div id="board-container" data-project-id='<?= $project['id'] ?>'>
+<div id="board-container" data-project-id='<?= (int) $project['id'] ?>'>
 	<?php if (empty($swimlanes) || empty($swimlanes[0]['nb_columns'])): ?>
 		<p class="alert alert-error"><?= t('There is no column or swimlane activated in your project!') ?></p>
 	<?php else: ?>
@@ -10,9 +10,9 @@
 				   class="board-project"
 				   data-project-id="<?= $project['id'] ?>"
 				   data-check-interval="<?= $board_private_refresh_interval ?>"
-				   data-save-url="<?= $this->url->href('BoardAjaxController', 'save', array('plugin' => "Bigboard", 'project_id' => $project['id'])) ?>"
-				   data-reload-url="<?= $this->url->href('BoardAjaxController', 'reload', array('plugin' => "Bigboard", 'project_id' => $project['id'])) ?>"
-				   data-check-url="<?= $this->url->href('BoardAjaxController', 'check', array('plugin' => "Bigboard", 'project_id' => $project['id'], 'timestamp' => time())) ?>"
+				   data-save-url="<?= $this->url->href('BoardAjaxController', 'save', array('plugin' => "Bigboard", 'project_id' => $project['id'], 'csrf_token' => $this->app->getToken()->getReusableCSRFToken())) ?>"
+				   data-reload-url="<?= $this->url->href('BoardAjaxController', 'reload', array('plugin' => "Bigboard", 'project_id' => $project['id'], 'csrf_token' => $this->app->getToken()->getReusableCSRFToken())) ?>"
+				   data-check-url="<?= $this->url->href('BoardAjaxController', 'check', array('plugin' => "Bigboard", 'project_id' => $project['id'], 'timestamp' => time(), 'csrf_token' => $this->app->getToken()->getReusableCSRFToken())) ?>"
 				   data-task-creation-url="<?= $this->url->href('TaskCreationController', 'show', array('project_id' => $project['id'])) ?>"
 			>
 		<?php endif ?>

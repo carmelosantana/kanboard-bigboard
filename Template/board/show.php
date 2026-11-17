@@ -54,3 +54,16 @@
         </div>
     </form>
 </div>
+
+<section><?= $this->render('bigboard:board/switcher', ['bigboarddisplaymode' => $bigboarddisplaymode]) ?></section>
+<div class="bigboard-status"><span id="status_update"></span></div>
+<div id="bigboard">
+    <?php if ($boards === ''): ?>
+        <p class="alert">
+            <?= t('No project has been selected for the BigBoard yet.') ?>
+            <?= $this->url->icon('cogs', t('Choose projects'), 'Bigboard', 'select', ['plugin' => 'Bigboard'], false, 'js-modal-medium') ?>
+        </p>
+    <?php else: ?>
+        <?= $boards ?>
+    <?php endif ?>
+</div>

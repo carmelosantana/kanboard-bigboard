@@ -2,15 +2,15 @@
 	<div class="views-switcher-component">
 		<ul class="views">
 			<li>
-				<a href="<?= $this->app->config('application_url') ?>"><i class="fa fa-home fa-fw"></i><?= t('Home') ?></a>
+				<?= $this->url->icon('home', t('Home'), 'DashboardController', 'show') ?>
 			</li>
 			<li>
 				<?= $this->url->icon('eye', t('Projects Selection'), 'Bigboard', 'select', ['plugin' => 'Bigboard', 'boardview' => 'active', ], false, 'js-modal-medium') ?>
 			</li>
-			<li class="collapse_all">
+			<li class="collapse_all" data-url="<?= $this->url->href('BoardAjaxController', 'collapseAllProjects', ['plugin' => 'Bigboard']) ?>">
 				<a href="#"><i class="fa fa-folder-o fa-fw"></i><?= t('Collapse projects') ?></a>
 			</li>
-			<li class="expand_all">
+			<li class="expand_all" data-url="<?= $this->url->href('BoardAjaxController', 'expandAllProjects', ['plugin' => 'Bigboard']) ?>">
 				<a href="#"><i class="fa fa-folder-open-o fa-fw"></i><?= t('Expand projects') ?></a>
 			</li>
 			<li>
@@ -34,7 +34,7 @@
 				</span>
 			</li>
 			<li>
-				<a href="/?controller=ActivityController&amp;action=user" class="js-modal-medium" title=""><i class="fa fa-dashboard fa-fw js-modal-medium" aria-hidden="true"></i><?= t('Activity') ?></a>
+				<?= $this->url->icon('dashboard', t('Activity'), 'ActivityController', 'user', [], false, 'js-modal-medium') ?>
 			</li>
 		</ul>
 	</div>
