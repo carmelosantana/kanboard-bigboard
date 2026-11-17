@@ -62,17 +62,17 @@ class MoveGuardTest extends Base
         $this->assertTrue($this->guard()->isAllowed($this->move($this->taskInOne, 1, 2, 1, 5, 2)));
     }
 
-    public function testStealingATaskFromAForeignProjectIsRefused(): void
+    public function testTaskFromAnInaccessibleProjectIsRefused(): void
     {
         $this->assertFalse($this->guard()->isAllowed($this->move($this->taskInForeign, 3, 1, 9, 1, 1)));
     }
 
-    public function testLyingAboutTheSourceProjectIsRefused(): void
+    public function testMismatchedSourceProjectIsRefused(): void
     {
         $this->assertFalse($this->guard()->isAllowed($this->move($this->taskInForeign, 1, 1, 1, 2, 1)));
     }
 
-    public function testPushingATaskIntoAForeignProjectIsRefused(): void
+    public function testInaccessibleTargetProjectIsRefused(): void
     {
         $this->assertFalse($this->guard()->isAllowed($this->move($this->taskInOne, 1, 3, 1, 9, 3)));
     }
