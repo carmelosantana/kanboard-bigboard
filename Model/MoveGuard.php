@@ -67,7 +67,7 @@ class MoveGuard extends Base
 
     /**
      * Same-project move of an open task from $srcColumn to $dstColumn, using
-     * core's pair semantics (a rule matches in either direction). When every rule
+     * core's pair semantics (a rule matches in either direction). When any rule
      * matching the pair is "only assigned", the task must belong to the user.
      */
     private function pairAllowed(array $task, int $projectId, int $srcColumn, int $dstColumn): bool
@@ -91,12 +91,12 @@ class MoveGuard extends Base
         }
 
         foreach ($matching as $rule) {
-            if ((int) $rule['only_assigned'] !== 1) {
-                return true;
+            if ((int) $rule['only_assigned'] === 1) {
+                return (int) $task['owner_id'] === (int) $this->userSession->getId();
             }
         }
 
-        return $matching === [] || (int) $task['owner_id'] === (int) $this->userSession->getId();
+        return true;
     }
 
     private function belongsTo(string $table, int $id, int $projectId): bool
