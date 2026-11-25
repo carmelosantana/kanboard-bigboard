@@ -43,11 +43,17 @@ class MoveGuard extends Base
         }
 
         if ($src === $dst) {
-            // canMoveTask checks the column pair but not the task owner, so an
-            // "only assigned" restriction is enforced through isDraggable, as on
-            // core's board.
-            return (bool) $this->helper->projectRole->isDraggable($task)
-                && (bool) $this->helper->projectRole->canMoveTask($src, (int) $task['column_id'], $dstColumn);
+            $srcColumn = (int) $task['column_id'];
+
+            // Reordering inside one column has no pair: use core's column rule.
+            if ($srcColumn === $dstColumn) {
+                return (bool) $this->helper->projectRole->isDraggable($task);
+            }
+
+            // isDraggable is column-wide, so an unrelated unrestricted rule on the
+            // source column would hide an "only assigned" rule on this exact pair.
+            // Authorize the pair itself, then its ownership requirement.
+            return $this->pairAllowed($task, $src, $srcColumn, $dstColumn);
         }
 
         // Cross-project: the drag starts on the source board, so the task must be
@@ -57,6 +63,40 @@ class MoveGuard extends Base
         // no custom-role restriction on the destination beyond project access, which
         // is checked above, so none is invented here.
         return (bool) $this->helper->projectRole->isDraggable($task);
+    }
+
+    /**
+     * Same-project move of an open task from $srcColumn to $dstColumn, using
+     * core's pair semantics (a rule matches in either direction). When every rule
+     * matching the pair is "only assigned", the task must belong to the user.
+     */
+    private function pairAllowed(array $task, int $projectId, int $srcColumn, int $dstColumn): bool
+    {
+        if (! $this->helper->projectRole->canMoveTask($projectId, $srcColumn, $dstColumn)) {
+            return false;
+        }
+
+        $role = $this->helper->projectRole->getProjectUserRole($projectId);
+        if (! $this->role->isCustomProjectRole($role)) {
+            return true;
+        }
+
+        $matching = [];
+        foreach ($this->columnMoveRestrictionCacheDecorator->getSortableColumns($projectId, $role) as $rule) {
+            $forward = $rule['src_column_id'] == $srcColumn && $rule['dst_column_id'] == $dstColumn;
+            $reverse = $rule['src_column_id'] == $dstColumn && $rule['dst_column_id'] == $srcColumn;
+            if ($forward || $reverse) {
+                $matching[] = $rule;
+            }
+        }
+
+        foreach ($matching as $rule) {
+            if ((int) $rule['only_assigned'] !== 1) {
+                return true;
+            }
+        }
+
+        return $matching === [] || (int) $task['owner_id'] === (int) $this->userSession->getId();
     }
 
     private function belongsTo(string $table, int $id, int $projectId): bool

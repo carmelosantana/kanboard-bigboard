@@ -198,6 +198,37 @@ class MoveGuardTest extends Base
         $this->assertTrue($this->guard()->isAllowed($this->move($mine, 1, 1, 1, 2, 1)));
     }
 
+    /** Unrestricted 1 -> 2 plus only-assigned 1 -> 3 for the same custom role. */
+    private function mixedRules(): array
+    {
+        $roleId = $this->customRole(1, 'Mover');
+        $restrictions = new ColumnMoveRestrictionModel($this->container);
+        $restrictions->create(1, $roleId, 1, 2);
+        $restrictions->create(1, $roleId, 1, 3, true);
+        $someoneElse = (new UserModel($this->container))->create(['username' => 'alice']);
+
+        return [$this->taskInColumn(1, 1, $someoneElse), $this->taskInColumn(1, 1, $_SESSION['user']['id'])];
+    }
+
+    public function testOnlyAssignedPairIsEnforcedAlongsideAnUnrestrictedPair(): void
+    {
+        [$theirs, $mine] = $this->mixedRules();
+
+        $this->assertTrue($this->guard()->isAllowed($this->move($theirs, 1, 1, 1, 2, 1)));
+        $this->assertFalse($this->guard()->isAllowed($this->move($theirs, 1, 1, 1, 3, 1)));
+        $this->assertTrue($this->guard()->isAllowed($this->move($mine, 1, 1, 1, 3, 1)));
+    }
+
+    public function testOnlyAssignedPairIsEnforcedInReverseDirection(): void
+    {
+        [$theirs, $mine] = $this->mixedRules();
+        $theirsInThree = $this->taskInColumn(1, 3, (int) (new UserModel($this->container))->create(['username' => 'carol']));
+        $mineInThree = $this->taskInColumn(1, 3, $_SESSION['user']['id']);
+
+        $this->assertFalse($this->guard()->isAllowed($this->move($theirsInThree, 1, 1, 3, 1, 1)));
+        $this->assertTrue($this->guard()->isAllowed($this->move($mineInThree, 1, 1, 3, 1, 1)));
+    }
+
     public function testCrossProjectMoveIgnoresDestinationColumnRules(): void
     {
         // Core's "move to another project" applies no custom-role rule on the destination.
