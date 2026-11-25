@@ -9,6 +9,9 @@ use Kanboard\Core\Base;
  * from the request body, so each is checked: the task really lives in the
  * source project, the target column and swimlane belong to the target project,
  * and the user may move tasks on both boards (same ACL as core's board save).
+ * The source column is always the task's real column: the request's
+ * src_column_id is never trusted. Closed tasks are refused, since
+ * moveToProject would reopen them (core's board only drags open tasks).
  */
 class MoveGuard extends Base
 {
@@ -17,7 +20,6 @@ class MoveGuard extends Base
         $taskId = (int) ($move['task_id'] ?? 0);
         $src = (int) ($move['src_project_id'] ?? 0);
         $dst = (int) ($move['dst_project_id'] ?? 0);
-        $srcColumn = (int) ($move['src_column_id'] ?? 0);
         $dstColumn = (int) ($move['dst_column_id'] ?? 0);
         $dstSwimlane = (int) ($move['dst_swimlane_id'] ?? 0);
 
@@ -26,7 +28,7 @@ class MoveGuard extends Base
         }
 
         $task = $this->taskFinderModel->getById($taskId);
-        if (empty($task) || (int) $task['project_id'] !== $src) {
+        if (empty($task) || (int) $task['project_id'] !== $src || (int) $task['is_active'] !== 1) {
             return false;
         }
 
@@ -41,11 +43,16 @@ class MoveGuard extends Base
         }
 
         if ($src === $dst) {
-            return $this->helper->projectRole->canMoveTask($src, $srcColumn, $dstColumn);
+            return (bool) $this->helper->projectRole->canMoveTask($src, (int) $task['column_id'], $dstColumn);
         }
 
-        return $this->helper->projectRole->canMoveTask($src, $srcColumn, $srcColumn)
-            && $this->helper->projectRole->canMoveTask($dst, $dstColumn, $dstColumn);
+        // Cross-project: the drag starts on the source board, so the task must be
+        // draggable there by core's own rule (isDraggable: open task, column move
+        // restrictions incl. "only assigned", and the task_move role restriction).
+        // Core's "move to another project" (TaskDuplicationController::move) applies
+        // no custom-role restriction on the destination beyond project access, which
+        // is checked above, so none is invented here.
+        return (bool) $this->helper->projectRole->isDraggable($task);
     }
 
     private function belongsTo(string $table, int $id, int $projectId): bool
