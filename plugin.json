@@ -1,7 +1,7 @@
 {
     "name": "Bigboard",
     "description": "BigBoard: one board showing several projects at once, with drag-and-drop between them. A maintained fork that only ever shows projects you can access.",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "author": "Carmelo Santana",
     "license": "MIT",
     "homepage": "https://github.com/carmelosantana/kanboard-bigboard",
