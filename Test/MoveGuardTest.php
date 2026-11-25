@@ -233,8 +233,9 @@ class MoveGuardTest extends Base
     {
         $roleId = $this->customRole(1, 'Mover');
         $restrictions = new ColumnMoveRestrictionModel($this->container);
+        // The table is unique per direction, so the same pair is 1 -> 3 plus 3 -> 1.
         $restrictions->create(1, $roleId, 1, 3);
-        $restrictions->create(1, $roleId, 1, 3, true);
+        $restrictions->create(1, $roleId, 3, 1, true);
         $someoneElse = (new UserModel($this->container))->create(['username' => 'alice']);
         $theirs = $this->taskInColumn(1, 1, $someoneElse);
         $mine = $this->taskInColumn(1, 1, $_SESSION['user']['id']);

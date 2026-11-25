@@ -4,7 +4,7 @@
 
 ### Security
 - Drag-and-drop moves are authorized from the task's real column, not the posted source column, and closed tasks are refused (moving one to another project used to reopen it). Moves within a project and across projects both follow core's draggable rule, including column restrictions and "only assigned".
-- A same-project move is authorized against the exact source and destination column pair, so an unrelated unrestricted rule on the source column no longer lets a user move another user's task through an "only assigned" pair.
+- A same-project move is authorized against the exact source and destination column pair: if any rule on that pair is "only assigned", only the assignee may move the task, so an unrelated unrestricted rule on the source column no longer lets another user move it.
 
 ## 2.0.0 — 2026-11-17
 
