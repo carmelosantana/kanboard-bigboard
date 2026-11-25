@@ -4,9 +4,13 @@ require_once 'tests/units/Base.php';
 
 use KanboardTests\units\Base;
 use Kanboard\Core\Security\Role;
+use Kanboard\Model\ColumnMoveRestrictionModel;
 use Kanboard\Model\ProjectModel;
+use Kanboard\Model\ProjectRoleModel;
+use Kanboard\Model\ProjectRoleRestrictionModel;
 use Kanboard\Model\ProjectUserRoleModel;
 use Kanboard\Model\TaskCreationModel;
+use Kanboard\Model\TaskStatusModel;
 use Kanboard\Model\UserModel;
 use Kanboard\Plugin\Bigboard\Model\MoveGuard;
 
@@ -98,5 +102,154 @@ class MoveGuardTest extends Base
         (new ProjectUserRoleModel($this->container))->changeUserRole(1, $_SESSION['user']['id'], Role::PROJECT_VIEWER);
 
         $this->assertFalse($this->guard()->isAllowed($this->move($this->taskInOne, 1, 1, 1, 2, 1)));
+    }
+
+    /** Gives bob a custom role on the project; returns the role id. */
+    private function customRole(int $projectId, string $name): int
+    {
+        $roleId = (new ProjectRoleModel($this->container))->create($projectId, $name);
+        (new ProjectUserRoleModel($this->container))->changeUserRole($projectId, $_SESSION['user']['id'], $name);
+
+        return $roleId;
+    }
+
+    private function taskInColumn(int $projectId, int $columnId, int $ownerId = 0): int
+    {
+        return (new TaskCreationModel($this->container))->create([
+            'project_id' => $projectId, 'column_id' => $columnId, 'owner_id' => $ownerId, 'title' => 'placed',
+        ]);
+    }
+
+    public function testForgedSourceColumnIsIgnored(): void
+    {
+        $roleId = $this->customRole(1, 'Mover');
+        (new ColumnMoveRestrictionModel($this->container))->create(1, $roleId, 1, 2);
+        $taskInThree = $this->taskInColumn(1, 3);
+
+        // The task really sits in column 3; claiming column 1 must not unlock 1 -> 2.
+        $this->assertFalse($this->guard()->isAllowed($this->move($taskInThree, 1, 1, 1, 2, 1)));
+    }
+
+    public function testClosedTaskIsRefused(): void
+    {
+        (new TaskStatusModel($this->container))->close($this->taskInOne);
+
+        $this->assertFalse($this->guard()->isAllowed($this->move($this->taskInOne, 1, 1, 1, 2, 1)));
+        $this->assertFalse($this->guard()->isAllowed($this->move($this->taskInOne, 1, 2, 1, 5, 2)));
+    }
+
+    public function testCustomRoleColumnRestrictionsHoldInTheSameProject(): void
+    {
+        $roleId = $this->customRole(1, 'Mover');
+        (new ColumnMoveRestrictionModel($this->container))->create(1, $roleId, 1, 2);
+
+        $this->assertTrue($this->guard()->isAllowed($this->move($this->taskInOne, 1, 1, 1, 2, 1)));
+        $this->assertFalse($this->guard()->isAllowed($this->move($this->taskInOne, 1, 1, 1, 3, 1)));
+    }
+
+    public function testCustomRoleWithTaskMoveRestrictionCannotMoveInTheSameProject(): void
+    {
+        $roleId = $this->customRole(1, 'Frozen');
+        (new ProjectRoleRestrictionModel($this->container))->create(1, $roleId, ProjectRoleRestrictionModel::RULE_TASK_MOVE);
+
+        $this->assertFalse($this->guard()->isAllowed($this->move($this->taskInOne, 1, 1, 1, 2, 1)));
+    }
+
+    public function testCrossProjectMoveNeedsTheRealSourceColumnToBeMovable(): void
+    {
+        $roleId = $this->customRole(1, 'Mover');
+        (new ColumnMoveRestrictionModel($this->container))->create(1, $roleId, 1, 2);
+        $taskInThree = $this->taskInColumn(1, 3);
+
+        $this->assertTrue($this->guard()->isAllowed($this->move($this->taskInOne, 1, 2, 1, 5, 2)));
+        $this->assertFalse($this->guard()->isAllowed($this->move($taskInThree, 1, 2, 3, 5, 2)));
+        $this->assertFalse($this->guard()->isAllowed($this->move($taskInThree, 1, 2, 1, 5, 2)));
+    }
+
+    public function testCrossProjectMoveHonoursTheTaskMoveRestriction(): void
+    {
+        $roleId = $this->customRole(1, 'Frozen');
+        (new ProjectRoleRestrictionModel($this->container))->create(1, $roleId, ProjectRoleRestrictionModel::RULE_TASK_MOVE);
+
+        $this->assertFalse($this->guard()->isAllowed($this->move($this->taskInOne, 1, 2, 1, 5, 2)));
+    }
+
+    public function testCrossProjectMoveHonoursOnlyAssigned(): void
+    {
+        $roleId = $this->customRole(1, 'Mover');
+        (new ColumnMoveRestrictionModel($this->container))->create(1, $roleId, 1, 2, true);
+        $someoneElse = (new UserModel($this->container))->create(['username' => 'alice']);
+        $theirs = $this->taskInColumn(1, 1, $someoneElse);
+        $mine = $this->taskInColumn(1, 1, $_SESSION['user']['id']);
+
+        $this->assertFalse($this->guard()->isAllowed($this->move($theirs, 1, 2, 1, 5, 2)));
+        $this->assertTrue($this->guard()->isAllowed($this->move($mine, 1, 2, 1, 5, 2)));
+    }
+
+    public function testSameProjectMoveHonoursOnlyAssigned(): void
+    {
+        $roleId = $this->customRole(1, 'Mover');
+        (new ColumnMoveRestrictionModel($this->container))->create(1, $roleId, 1, 2, true);
+        $someoneElse = (new UserModel($this->container))->create(['username' => 'alice']);
+        $theirs = $this->taskInColumn(1, 1, $someoneElse);
+        $mine = $this->taskInColumn(1, 1, $_SESSION['user']['id']);
+
+        $this->assertFalse($this->guard()->isAllowed($this->move($theirs, 1, 1, 1, 2, 1)));
+        $this->assertTrue($this->guard()->isAllowed($this->move($mine, 1, 1, 1, 2, 1)));
+    }
+
+    /** Unrestricted 1 -> 2 plus only-assigned 1 -> 3 for the same custom role. */
+    private function mixedRules(): array
+    {
+        $roleId = $this->customRole(1, 'Mover');
+        $restrictions = new ColumnMoveRestrictionModel($this->container);
+        $restrictions->create(1, $roleId, 1, 2);
+        $restrictions->create(1, $roleId, 1, 3, true);
+        $someoneElse = (new UserModel($this->container))->create(['username' => 'alice']);
+
+        return [$this->taskInColumn(1, 1, $someoneElse), $this->taskInColumn(1, 1, $_SESSION['user']['id'])];
+    }
+
+    public function testOnlyAssignedPairIsEnforcedAlongsideAnUnrestrictedPair(): void
+    {
+        [$theirs, $mine] = $this->mixedRules();
+
+        $this->assertTrue($this->guard()->isAllowed($this->move($theirs, 1, 1, 1, 2, 1)));
+        $this->assertFalse($this->guard()->isAllowed($this->move($theirs, 1, 1, 1, 3, 1)));
+        $this->assertTrue($this->guard()->isAllowed($this->move($mine, 1, 1, 1, 3, 1)));
+    }
+
+    public function testOnlyAssignedPairIsEnforcedInReverseDirection(): void
+    {
+        [$theirs, $mine] = $this->mixedRules();
+        $theirsInThree = $this->taskInColumn(1, 3, (int) (new UserModel($this->container))->create(['username' => 'carol']));
+        $mineInThree = $this->taskInColumn(1, 3, $_SESSION['user']['id']);
+
+        $this->assertFalse($this->guard()->isAllowed($this->move($theirsInThree, 1, 1, 3, 1, 1)));
+        $this->assertTrue($this->guard()->isAllowed($this->move($mineInThree, 1, 1, 3, 1, 1)));
+    }
+
+    public function testAnyOnlyAssignedRuleOnThePairWinsOverAnUnrestrictedOne(): void
+    {
+        $roleId = $this->customRole(1, 'Mover');
+        $restrictions = new ColumnMoveRestrictionModel($this->container);
+        // The table is unique per direction, so the same pair is 1 -> 3 plus 3 -> 1.
+        $restrictions->create(1, $roleId, 1, 3);
+        $restrictions->create(1, $roleId, 3, 1, true);
+        $someoneElse = (new UserModel($this->container))->create(['username' => 'alice']);
+        $theirs = $this->taskInColumn(1, 1, $someoneElse);
+        $mine = $this->taskInColumn(1, 1, $_SESSION['user']['id']);
+
+        $this->assertFalse($this->guard()->isAllowed($this->move($theirs, 1, 1, 1, 3, 1)));
+        $this->assertTrue($this->guard()->isAllowed($this->move($mine, 1, 1, 1, 3, 1)));
+    }
+
+    public function testCrossProjectMoveIgnoresDestinationColumnRules(): void
+    {
+        // Core's "move to another project" applies no custom-role rule on the destination.
+        $roleId = $this->customRole(2, 'Mover');
+        (new ColumnMoveRestrictionModel($this->container))->create(2, $roleId, 6, 7);
+
+        $this->assertTrue($this->guard()->isAllowed($this->move($this->taskInOne, 1, 2, 1, 5, 2)));
     }
 }
