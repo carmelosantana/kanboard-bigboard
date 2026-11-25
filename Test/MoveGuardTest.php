@@ -186,6 +186,18 @@ class MoveGuardTest extends Base
         $this->assertTrue($this->guard()->isAllowed($this->move($mine, 1, 2, 1, 5, 2)));
     }
 
+    public function testSameProjectMoveHonoursOnlyAssigned(): void
+    {
+        $roleId = $this->customRole(1, 'Mover');
+        (new ColumnMoveRestrictionModel($this->container))->create(1, $roleId, 1, 2, true);
+        $someoneElse = (new UserModel($this->container))->create(['username' => 'alice']);
+        $theirs = $this->taskInColumn(1, 1, $someoneElse);
+        $mine = $this->taskInColumn(1, 1, $_SESSION['user']['id']);
+
+        $this->assertFalse($this->guard()->isAllowed($this->move($theirs, 1, 1, 1, 2, 1)));
+        $this->assertTrue($this->guard()->isAllowed($this->move($mine, 1, 1, 1, 2, 1)));
+    }
+
     public function testCrossProjectMoveIgnoresDestinationColumnRules(): void
     {
         // Core's "move to another project" applies no custom-role rule on the destination.

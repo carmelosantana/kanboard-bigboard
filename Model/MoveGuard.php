@@ -43,7 +43,11 @@ class MoveGuard extends Base
         }
 
         if ($src === $dst) {
-            return (bool) $this->helper->projectRole->canMoveTask($src, (int) $task['column_id'], $dstColumn);
+            // canMoveTask checks the column pair but not the task owner, so an
+            // "only assigned" restriction is enforced through isDraggable, as on
+            // core's board.
+            return (bool) $this->helper->projectRole->isDraggable($task)
+                && (bool) $this->helper->projectRole->canMoveTask($src, (int) $task['column_id'], $dstColumn);
         }
 
         // Cross-project: the drag starts on the source board, so the task must be
